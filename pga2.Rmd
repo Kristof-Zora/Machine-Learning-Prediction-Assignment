@@ -1,0 +1,150 @@
+---
+title: "Prediction Assignment"
+author: "K.Sz."
+date: '2021 02 12 '
+output:
+  html_document: default
+  pdf_document: default
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+## Overview
+The goal of the project is to predict the manner in which they did the exercise. This is the "classe" variable in the training set.
+
+In this project, the goal will be to use data from accelerometers on the belt, forearm, arm, and dumbell of 6 participants. They were asked to perform barbell lifts correctly and incorrectly in 5 different ways. More information is available from the website here: http://web.archive.org/web/20161224072740/http:/groupware.les.inf.puc-rio.br/har (see the section on the Weight Lifting Exercise Dataset).
+
+The data for this project come from this source: http://web.archive.org/web/20161224072740/http:/groupware.les.inf.puc-rio.br/har.
+
+
+
+
+
+
+
+
+
+
+## Loading libraries and files
+First of all I load the libraries, which I need. Then I read the trainfile *pml-training.csv* callse **training** and testfile *pml-testing.csv* called **testing**.
+
+```{r loading, echo=TRUE, results="hide"}
+library(lattice)
+library(ggplot2)
+library(caret)
+library(dplyr)
+library(lubridate)
+library(rattle)
+library(tictoc)
+
+training<-read.csv("pml-training.csv")
+testing<-read.csv("pml-testing.csv")
+```
+
+
+## First glance
+I want to see some informations from *training* dataset.
+
+```{r first, echo=TRUE, results="hide"}
+d1<-dim(training)
+d2<-dim(testing)
+str(training)
+summary(training)
+colnames(training)==colnames(testing)
+miss1<-colnames(training)[which(colnames(training)!=colnames(testing))]
+miss2<-colnames(testing)[which(colnames(training)!=colnames(testing))]
+```
+The **training** dataset has `r d1[1]` rows and `r d1[2]` columns and **testing** has `r d2[1]` rows and `r d2[2]` columns. With the help of **str** it turns out, that **training** has a lot of *character* variables which contain numbers (such as *kurtosis_roll_belt*, *kurtosis_picth_belt*, etc.) and some *character* variables, which are in fact *factor* variables (for example, *user_name*, *new_window*, etc.). It turns out, that the columns of **training** and **testing** are not the same. The variable *`r miss2`* is missing from **training** and the variable *`r miss1`* is missing from **testing**. Now I do some modificaions.
+
+```{r modif, echo=TRUE, results="hide"}
+training$new_window<-as.factor(training$new_window)
+testing$new_window<-as.factor(testing$new_window)
+training$classe<-as.factor(training$classe)
+
+training[,c(12:17,20,23,26,69:74,87:92,95,98,101,125:130,133,136,139)]<-sapply(training[,c(12:17,20,23,26,69:74,87:92,95,98,101,125:130,133,136,139)],as.numeric)
+
+testing[,c(12:17,20,23,26,69:74,87:92,95,98,101,125:130,133,136,139)]<-sapply(testing[,c(12:17,20,23,26,69:74,87:92,95,98,101,125:130,133,136,139)],as.numeric)
+        
+training<-select(training,-c(cvtd_timestamp))
+testing<-select(testing,-c(cvtd_timestamp))
+```
+
+I have modified the variables *new_window* and *classe* to *factor variable*s, and a lot of variables of **training** and **testing** to *numeric*. Moreover, I throw away the variable *cvtd_timestamp*, because it is only a timestamp.
+
+## Missing values
+
+```{r missingValues, echo=TRUE, results="hide"}
+na<-sapply(training,function(v){mean(is.na(v))})
+s1<-sum(na>0.95)
+```
+The variable **na** gives the proportion of **NA**'s in the columns and therofore there are sum(na>0) = `r sum(na>0)` variables with **NA** values. Moreover, in theese columns the proportion of the **NA**'s are greater than **95%**, see sum(na>0.95) = `r  s1`. Hence I will throw away these variables.
+
+```{r threw, echo=TRUE, results="hide"}
+ind<-(na>0)
+training<-training[,!ind]
+d3<-dim(training)[2]
+na2<-sapply(training,is.na)
+```
+The **trainig** dataset has now `r d3` variables (`r d1[2]` - 1 - `r sum(na>0)`). Now **training** contains `r sum(na2)` **NA** values.
+
+## Validation Set
+I take a partition of **training** dataset.
+```{r valid, eco=TRUE, results="hide"}
+set.seed(12123)
+inTrain<-createDataPartition(y=training$classe,
+                p=0.75,list=FALSE)
+trainSet<-training[inTrain,]
+validSet<-training[-inTrain,]
+```
+
+
+## Models
+Firstly, let us make a tree classification
+```{r tree, echo=TRUE}
+tic()
+mod1<-train(classe~.,data=trainSet, method="rpart")
+toc()
+fancyRpartPlot(mod1$finalModel)
+pred1<-predict(mod1,validSet)
+table(validSet$classe,pred1)
+acc1<-mean(validSet$classe==pred1)
+```
+The Accuracy of this model is `r acc1*100`%. This is not so bad, but we can create much more better Model. This is Random Forest. Firstly, I will run random forest with different number of trees (1 to 50) and I predict the validation set **validSet**. I plot the accuracy of the modell as a function of the number of the trees in the random forest.
+
+```{r randomForests, echo=TRUE}
+B<-50
+Accuracy<-rep(0,B)
+tic()
+for(i in 1:B){
+        mod2<-train(classe~.,data=trainSet, method="rf", ntree=i)
+        pred2<-predict(mod2,validSet)
+        Accuracy[i]<-mean(validSet$classe==pred2)
+}
+toc()
+print(Accuracy)
+plot(Accuracy,pch=19,cex=1,col='green')
+```
+
+It can be seen, that a high accuracy can be reached alread with smaller forest. Therefore I choose a smaller model and I run the random forest with 30 trees instead of the initialized 500 trees. 
+
+```{r randomForest, echo=TRUE}
+tic()
+mod2<-train(classe~.,data=trainSet, method="rf", n.tree=30)
+toc()
+pred2<-predict(mod2,validSet)
+table(validSet$classe,pred2)
+acc2<-mean(validSet$classe==pred2)
+```
+It can be seen that the accuracy of this model is much more higher: `r acc2*100`%.
+
+## Prediction of the testing set:
+
+Now let us joint the the **testing** set with the prediction of the second model.
+```{r connect, echo=TRUE}
+pred3<-predict(mod2,testing)
+testing<-cbind(testing,pred3)
+testing[,159:160]
+```
+
